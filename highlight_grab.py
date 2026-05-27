@@ -829,11 +829,13 @@ class HighlightGrab(tk.Tk):
         def t_to_x(t):
             return int(t / self.duration * w)
 
-        # In/Out region
+        # In/Out region — stipple ger halvtransparent effekt
+        # (tkinter Canvas stöder INTE 8-siffriga RGBA-färger som "#f5a62355")
         if self.in_point is not None and self.out_point is not None:
             x1 = t_to_x(self.in_point)
             x2 = t_to_x(self.out_point)
-            c.create_rectangle(x1, 0, x2, h, fill=ACCENT + "55", outline="")
+            c.create_rectangle(x1, 0, x2, h, fill=ACCENT, outline="",
+                               stipple="gray50")
 
         # In marker
         if self.in_point is not None:
