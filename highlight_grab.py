@@ -177,57 +177,64 @@ class HighlightGrab(tk.Tk):
 
     # ── Drag-and-drop (Windows DragAcceptFiles — ingen OLE/COM) ──────────────
     def _setup_drop_files(self):
-        """Registrera Windows inbyggda fil-drop via DragAcceptFiles.
+        """Registrera Windows inbyggda fil-drop via DragAcceptFiles + WM_DROPFILES.
 
-        Använder INTE tkinterdnd2/OLE — det modifierar fönstrets meddelandeloop
-        och blockerar musklick på child-widgets. DragAcceptFiles + WM_DROPFILES
-        är en enklare Win32-mekanism utan den konflikten.
+        Ingen OLE/COM — undviker den meddelandeloop-konflikt som tkinterdnd2 orsakar.
         """
         try:
             shell32 = ctypes.windll.shell32
             user32  = ctypes.windll.user32
             hwnd    = self.winfo_id()
 
-            # Tillåt WM_DROPFILES från icke-upphöjda processer (UAC-fix)
-            MSGFLT_ALLOW = 1
             WM_DROPFILES      = 0x0233
             WM_COPYGLOBALDATA = 0x0049
+            GWLP_WNDPROC      = -4
+            LONG_PTR = ctypes.c_longlong if sys.maxsize > 2**32 else ctypes.c_long
+
+            # UAC-fix: tillåt WM_DROPFILES från Explorer (icke-upphöjd)
             try:
-                user32.ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, MSGFLT_ALLOW, None)
-                user32.ChangeWindowMessageFilterEx(hwnd, WM_COPYGLOBALDATA, MSGFLT_ALLOW, None)
+                user32.ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, 1, None)
+                user32.ChangeWindowMessageFilterEx(hwnd, WM_COPYGLOBALDATA, 1, None)
             except Exception:
                 pass
 
             shell32.DragAcceptFiles(hwnd, True)
 
-            # Subklassa fönstret för att ta emot WM_DROPFILES
+            # Rätt typer för 64-bit pekare
+            user32.SetWindowLongPtrW.restype  = LONG_PTR
+            user32.CallWindowProcW.restype    = LONG_PTR
+            user32.CallWindowProcW.argtypes   = [
+                LONG_PTR,
+                ctypes.wintypes.HWND, ctypes.wintypes.UINT,
+                ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM,
+            ]
+
             WNDPROC = ctypes.WINFUNCTYPE(
-                ctypes.c_long,
+                LONG_PTR,
                 ctypes.wintypes.HWND, ctypes.wintypes.UINT,
                 ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM,
             )
 
             def _proc(hwnd, msg, wparam, lparam):
                 if msg == WM_DROPFILES:
-                    hdrop = wparam
-                    count = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+                    count = shell32.DragQueryFileW(wparam, 0xFFFFFFFF, None, 0)
                     paths = []
                     for i in range(count):
-                        size = shell32.DragQueryFileW(hdrop, i, None, 0) + 1
+                        size = shell32.DragQueryFileW(wparam, i, None, 0) + 1
                         buf  = ctypes.create_unicode_buffer(size)
-                        shell32.DragQueryFileW(hdrop, i, buf, size)
+                        shell32.DragQueryFileW(wparam, i, buf, size)
                         paths.append(buf.value)
-                    shell32.DragFinish(hdrop)
+                    shell32.DragFinish(wparam)
                     self.after(0, lambda p=paths: self._handle_dropped_files(p))
                     return 0
                 return user32.CallWindowProcW(
                     self._old_wndproc, hwnd, msg, wparam, lparam
                 )
 
-            self._drop_wndproc = WNDPROC(_proc)   # måste hålla referens!
-            self._old_wndproc  = user32.SetWindowLongPtrW(hwnd, -4, self._drop_wndproc)
+            self._drop_wndproc = WNDPROC(_proc)   # håll referens!
+            self._old_wndproc  = user32.SetWindowLongPtrW(hwnd, GWLP_WNDPROC, self._drop_wndproc)
         except Exception as e:
-            print(f"DnD setup failed: {e}")
+            print(f"DnD setup failed: {e}", flush=True)
 
     def _handle_dropped_files(self, paths):
         added = 0
@@ -683,9 +690,13 @@ class HighlightGrab(tk.Tk):
         self._show_toast("✓ Segment sparat")
 
     def _remove_segment(self, seg_id):
-        self.segments = [s for s in self.segments if s["id"] != seg_id]
-        self.thumb_cache.pop(seg_id, None)
-        self._refresh_segments()
+        try:
+            self.segments = [s for s in self.segments if s["id"] != seg_id]
+            self.thumb_cache.pop(seg_id, None)
+            self._refresh_segments()
+            self._show_toast("Segment borttaget")
+        except Exception as e:
+            messagebox.showerror("Fel", f"Kunde inte ta bort segment:\n{e}", parent=self)
 
     def _refresh_segments(self):
         for w in self.seg_list_frame.winfo_children():
