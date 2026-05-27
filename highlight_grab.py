@@ -418,10 +418,22 @@ class HighlightGrab(tk.Tk):
         )
 
     def _build_right(self, parent):
+        self._selected_seg_id = None
+
         hdr = tk.Frame(parent, bg=PANEL_BG, pady=12)
         hdr.pack(fill="x", padx=12)
         tk.Label(hdr, text="SEGMENTS", font=("Consolas", 11, "bold"),
                  fg=ACCENT, bg=PANEL_BG).pack(side="left")
+
+        # Stor radera-knapp i panelhuvudet
+        self.delete_selected_btn = tk.Button(
+            hdr, text="🗑 Ta bort", font=("Segoe UI", 9, "bold"),
+            bg=DANGER, fg="white", bd=0, relief="flat",
+            padx=10, pady=4, cursor="hand2",
+            activebackground="#c0392b", activeforeground="white",
+            command=self._delete_selected_or_last,
+        )
+        self.delete_selected_btn.pack(side="right")
 
         sep = tk.Frame(parent, bg="#333", height=1)
         sep.pack(fill="x")
@@ -723,15 +735,21 @@ class HighlightGrab(tk.Tk):
 
     def _make_segment_card(self, seg, dur):
         sid = seg["id"]
+        is_selected = (sid == self._selected_seg_id)
 
-        card = tk.Frame(self.seg_list_frame, bg="#2a2a2a")
-        card.pack(fill="x", padx=6, pady=3)
+        # Yttre frame ger orange ram när markerad
+        outer = tk.Frame(self.seg_list_frame,
+                         bg=ACCENT if is_selected else "#2a2a2a")
+        outer.pack(fill="x", padx=6, pady=3)
+
+        card = tk.Frame(outer, bg="#2a2a2a")
+        card.pack(fill="both", padx=2 if is_selected else 0,
+                  pady=2 if is_selected else 0)
 
         # ── Top row: thumbnail + info ──────────────────────────────────────
         top = tk.Frame(card, bg="#2a2a2a")
         top.pack(fill="x")
 
-        # Thumbnail
         thumb_frame = tk.Frame(top, bg="black", width=THUMB_W, height=THUMB_H)
         thumb_frame.pack(side="left", padx=(6, 0), pady=(6, 2))
         thumb_frame.pack_propagate(False)
@@ -742,38 +760,39 @@ class HighlightGrab(tk.Tk):
             tk.Label(thumb_frame, text="⏳", fg=MUTED, bg="black",
                      font=("Segoe UI", 16)).pack(expand=True)
 
-        # Info to the right of thumbnail
         info = tk.Frame(top, bg="#2a2a2a", padx=6)
         info.pack(side="left", fill="both", expand=True, pady=(6, 2))
 
         src_name = Path(seg["source"]).name[:20]
         tk.Label(info, text=src_name, font=("Segoe UI", 8),
                  fg=MUTED, bg="#2a2a2a", anchor="w").pack(fill="x")
-        tk.Label(info, text=f"{fmt_time(seg['in_point'])} →",
-                 font=("Consolas", 9, "bold"), fg=TEXT, bg="#2a2a2a", anchor="w").pack(fill="x")
-        tk.Label(info, text=fmt_time(seg['out_point']),
+        tk.Label(info, text=f"{fmt_time(seg['in_point'])} → {fmt_time(seg['out_point'])}",
                  font=("Consolas", 9, "bold"), fg=TEXT, bg="#2a2a2a", anchor="w").pack(fill="x")
         tk.Label(info, text=fmt_time(dur), font=("Consolas", 8),
                  fg=ACCENT, bg="#2a2a2a", anchor="w").pack(fill="x")
 
-        # ── Delete button ──────────────────────────────────────────────────
+        # ── Full-bred ta bort-knapp ─────────────────────────────────────────
         del_btn = tk.Button(
-            card, text="✕  Ta bort",
-            font=("Segoe UI", 9, "bold"), relief="raised", bd=1,
+            card, text="🗑  Ta bort detta segment",
+            font=("Segoe UI", 10, "bold"), relief="raised", bd=2,
             cursor="hand2", bg=DANGER, fg="white",
             activebackground="#c0392b", activeforeground="white",
-            pady=5,
+            pady=8,
+            command=lambda s=sid: self._remove_segment(s),
         )
-        del_btn.pack(fill="x", padx=6, pady=(0, 6))
-        # Bind directly — avoids any command= capture issues on Windows
+        del_btn.pack(fill="x", padx=6, pady=(4, 8))
         del_btn.bind("<Button-1>", lambda e, s=sid: self._remove_segment(s))
 
-        # Right-click anywhere on card → same delete menu
+        # Klick var som helst på kortet (utom knappen) markerar segmentet
+        for widget in (outer, card, top, info, thumb_frame):
+            widget.bind("<Button-1>", lambda e, s=sid: self._select_segment(s))
+
+        # Högerklick → kontextmeny
         menu = tk.Menu(self, tearoff=0, bg="#2a2a2a", fg=TEXT,
                        activebackground=DANGER, activeforeground="white")
-        menu.add_command(label="✕  Ta bort segment",
+        menu.add_command(label="🗑  Ta bort segment",
                          command=lambda s=sid: self._remove_segment(s))
-        for widget in (card, top, info, thumb_frame, del_btn):
+        for widget in (outer, card, top, info, thumb_frame, del_btn):
             widget.bind("<Button-3>",
                         lambda e, m=menu: m.post(e.x_root, e.y_root))
 
@@ -1027,6 +1046,18 @@ class HighlightGrab(tk.Tk):
     def _delete_last_segment(self):
         if self.segments:
             self._remove_segment(self.segments[-1]["id"])
+
+    def _delete_selected_or_last(self):
+        """Tar bort det markerade segmentet — eller det senaste om inget är markerat."""
+        if self._selected_seg_id and any(s["id"] == self._selected_seg_id for s in self.segments):
+            self._remove_segment(self._selected_seg_id)
+            self._selected_seg_id = None
+        elif self.segments:
+            self._remove_segment(self.segments[-1]["id"])
+
+    def _select_segment(self, seg_id):
+        self._selected_seg_id = seg_id
+        self._refresh_segments()
 
     def _change_speed(self, direction):
         opts = self._speed_options
