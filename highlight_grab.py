@@ -709,6 +709,8 @@ class HighlightGrab(_BaseWindow):
         self.total_dur_label.config(text=f"Total: {fmt_time(total)}")
 
     def _make_segment_card(self, seg, dur):
+        sid = seg["id"]
+
         card = tk.Frame(self.seg_list_frame, bg="#2a2a2a")
         card.pack(fill="x", padx=6, pady=3)
 
@@ -721,8 +723,8 @@ class HighlightGrab(_BaseWindow):
         thumb_frame.pack(side="left", padx=(6, 0), pady=(6, 2))
         thumb_frame.pack_propagate(False)
 
-        if seg["id"] in self.thumb_cache:
-            tk.Label(thumb_frame, image=self.thumb_cache[seg["id"]], bg="black").pack()
+        if sid in self.thumb_cache:
+            tk.Label(thumb_frame, image=self.thumb_cache[sid], bg="black").pack()
         else:
             tk.Label(thumb_frame, text="⏳", fg=MUTED, bg="black",
                      font=("Segoe UI", 16)).pack(expand=True)
@@ -741,15 +743,26 @@ class HighlightGrab(_BaseWindow):
         tk.Label(info, text=fmt_time(dur), font=("Consolas", 8),
                  fg=ACCENT, bg="#2a2a2a", anchor="w").pack(fill="x")
 
-        # ── Bottom row: full-width delete button ───────────────────────────
-        tk.Button(
-            card, text="✕  Ta bort segment",
-            font=("Segoe UI", 9), bd=0, relief="flat", cursor="hand2",
-            bg="#3a1a1a", fg=DANGER,
-            activebackground=DANGER, activeforeground="white",
-            pady=4,
-            command=lambda sid=seg["id"]: self._remove_segment(sid)
-        ).pack(fill="x", padx=6, pady=(0, 6))
+        # ── Delete button ──────────────────────────────────────────────────
+        del_btn = tk.Button(
+            card, text="✕  Ta bort",
+            font=("Segoe UI", 9, "bold"), relief="raised", bd=1,
+            cursor="hand2", bg=DANGER, fg="white",
+            activebackground="#c0392b", activeforeground="white",
+            pady=5,
+        )
+        del_btn.pack(fill="x", padx=6, pady=(0, 6))
+        # Bind directly — avoids any command= capture issues on Windows
+        del_btn.bind("<Button-1>", lambda e, s=sid: self._remove_segment(s))
+
+        # Right-click anywhere on card → same delete menu
+        menu = tk.Menu(self, tearoff=0, bg="#2a2a2a", fg=TEXT,
+                       activebackground=DANGER, activeforeground="white")
+        menu.add_command(label="✕  Ta bort segment",
+                         command=lambda s=sid: self._remove_segment(s))
+        for widget in (card, top, info, thumb_frame, del_btn):
+            widget.bind("<Button-3>",
+                        lambda e, m=menu: m.post(e.x_root, e.y_root))
 
     # ── Timeline drawing ──────────────────────────────────────────────────────
     def _draw_timeline(self):
