@@ -186,30 +186,29 @@ class HighlightGrab(_BaseWindow):
     def _register_drop_targets(self):
         if not _DND_AVAILABLE:
             return
-        # Only register the video frame — it is the largest neutral surface and
-        # has no interactive children that OLE could shadow. Panels with buttons
-        # (left, right) must NOT be registered or clicks stop working on Windows.
-        self.video_frame.drop_target_register(DND_FILES)
-        self.video_frame.dnd_bind("<<DropEnter>>", self._on_drop_enter)
-        self.video_frame.dnd_bind("<<DropLeave>>", self._on_drop_leave)
-        self.video_frame.dnd_bind("<<Drop>>", self._on_drop)
+        # Register ONLY the root window — never child widgets.
+        # VLC steals video_frame's HWND so tkinter stops receiving events there.
+        # The root HWND is always owned by tkinter and receives drops anywhere
+        # on the application window without interfering with child button clicks.
+        self.drop_target_register(DND_FILES)
+        self.dnd_bind("<<DropEnter>>", self._on_drop_enter)
+        self.dnd_bind("<<DropLeave>>", self._on_drop_leave)
+        self.dnd_bind("<<Drop>>", self._on_drop)
 
     def _on_drop_enter(self, event):
-        self.video_frame.config(bg="#2a3a2a")
         self._drop_hint = tk.Label(
-            self.video_frame, text="Släpp filer här",
-            font=("Segoe UI", 18, "bold"), fg=ACCENT, bg="#2a3a2a"
+            self.video_frame, text="⬇  Släpp videofiler här",
+            font=("Segoe UI", 20, "bold"), fg="black", bg=ACCENT,
+            padx=20, pady=10
         )
         self._drop_hint.place(relx=0.5, rely=0.5, anchor="center")
         return event.action
 
     def _on_drop_leave(self, event):
-        self.video_frame.config(bg="black")
         if hasattr(self, "_drop_hint"):
             self._drop_hint.destroy()
 
     def _on_drop(self, event):
-        self.video_frame.config(bg="black")
         if hasattr(self, "_drop_hint"):
             self._drop_hint.destroy()
         paths = self._parse_drop_paths(event.data)
@@ -710,41 +709,47 @@ class HighlightGrab(_BaseWindow):
         self.total_dur_label.config(text=f"Total: {fmt_time(total)}")
 
     def _make_segment_card(self, seg, dur):
-        card = tk.Frame(self.seg_list_frame, bg="#2a2a2a", pady=4)
+        card = tk.Frame(self.seg_list_frame, bg="#2a2a2a")
         card.pack(fill="x", padx=6, pady=3)
 
+        # ── Top row: thumbnail + info ──────────────────────────────────────
+        top = tk.Frame(card, bg="#2a2a2a")
+        top.pack(fill="x")
+
         # Thumbnail
-        thumb_frame = tk.Frame(card, bg="black", width=THUMB_W, height=THUMB_H)
-        thumb_frame.pack(side="left", padx=(6, 0))
+        thumb_frame = tk.Frame(top, bg="black", width=THUMB_W, height=THUMB_H)
+        thumb_frame.pack(side="left", padx=(6, 0), pady=(6, 2))
         thumb_frame.pack_propagate(False)
 
         if seg["id"] in self.thumb_cache:
-            thumb_label = tk.Label(thumb_frame, image=self.thumb_cache[seg["id"]],
-                                   bg="black")
-            thumb_label.pack()
+            tk.Label(thumb_frame, image=self.thumb_cache[seg["id"]], bg="black").pack()
         else:
             tk.Label(thumb_frame, text="⏳", fg=MUTED, bg="black",
                      font=("Segoe UI", 16)).pack(expand=True)
 
-        # Delete button – packed before info so side="right" claims space first
-        del_btn = tk.Button(card, text="✕", font=("Segoe UI", 11, "bold"),
-                            bg="#2a2a2a", fg=DANGER, bd=0, relief="flat",
-                            cursor="hand2", activebackground=DANGER,
-                            activeforeground="white", padx=8, pady=6,
-                            command=lambda sid=seg["id"]: self._remove_segment(sid))
-        del_btn.pack(side="right", anchor="center", padx=6, pady=4)
+        # Info to the right of thumbnail
+        info = tk.Frame(top, bg="#2a2a2a", padx=6)
+        info.pack(side="left", fill="both", expand=True, pady=(6, 2))
 
-        # Info
-        info = tk.Frame(card, bg="#2a2a2a", padx=6)
-        info.pack(side="left", fill="both", expand=True)
-
-        src_name = Path(seg["source"]).name[:22]
+        src_name = Path(seg["source"]).name[:20]
         tk.Label(info, text=src_name, font=("Segoe UI", 8),
                  fg=MUTED, bg="#2a2a2a", anchor="w").pack(fill="x")
-        tk.Label(info, text=f"{fmt_time(seg['in_point'])} → {fmt_time(seg['out_point'])}",
+        tk.Label(info, text=f"{fmt_time(seg['in_point'])} →",
+                 font=("Consolas", 9, "bold"), fg=TEXT, bg="#2a2a2a", anchor="w").pack(fill="x")
+        tk.Label(info, text=fmt_time(seg['out_point']),
                  font=("Consolas", 9, "bold"), fg=TEXT, bg="#2a2a2a", anchor="w").pack(fill="x")
         tk.Label(info, text=fmt_time(dur), font=("Consolas", 8),
                  fg=ACCENT, bg="#2a2a2a", anchor="w").pack(fill="x")
+
+        # ── Bottom row: full-width delete button ───────────────────────────
+        tk.Button(
+            card, text="✕  Ta bort segment",
+            font=("Segoe UI", 9), bd=0, relief="flat", cursor="hand2",
+            bg="#3a1a1a", fg=DANGER,
+            activebackground=DANGER, activeforeground="white",
+            pady=4,
+            command=lambda sid=seg["id"]: self._remove_segment(sid)
+        ).pack(fill="x", padx=6, pady=(0, 6))
 
     # ── Timeline drawing ──────────────────────────────────────────────────────
     def _draw_timeline(self):
