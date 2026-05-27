@@ -150,6 +150,7 @@ class HighlightGrab(tk.Tk):
         self._speed_options = [0.5, 1.0, 2.0, 4.0]
         self._drag_in = False
         self._drag_out = False
+        self._seek_pos = None       # optimistisk position medan VLC söker
         self._toast_after = None
 
         # VLC
@@ -625,15 +626,29 @@ class HighlightGrab(tk.Tk):
     def _seek(self, delta):
         if self._player is None or self.duration <= 0:
             return
-        pos = self._get_position() + delta
-        pos = max(0, min(self.duration, pos))
-        self._player.set_time(int(pos * 1000))
+        self._seek_to(self._get_position() + delta)
 
     def _get_position(self):
         if self._player is None:
             return 0
         ms = self._player.get_time()
-        return ms / 1000.0 if ms >= 0 else 0
+        vlc_pos = ms / 1000.0 if ms >= 0 else 0
+        # Optimistisk seek-position används tills VLC hunnit ifatt (±0.3 s)
+        if self._seek_pos is not None:
+            if abs(vlc_pos - self._seek_pos) < 0.3:
+                self._seek_pos = None  # VLC har hunnit ifatt
+                return vlc_pos
+            return self._seek_pos
+        return vlc_pos
+
+    def _seek_to(self, pos):
+        """Seeka till en position och uppdatera UI direkt."""
+        pos = max(0, min(self.duration, pos))
+        self._seek_pos = pos
+        if self._player:
+            self._player.set_time(int(pos * 1000))
+        self.timecode_label.config(text=fmt_time(pos))
+        self._draw_timeline()
 
     def _go_to_in(self):
         if self.in_point is not None:
@@ -851,8 +866,7 @@ class HighlightGrab(tk.Tk):
         if self.duration <= 0:
             return
         w = self.timeline.winfo_width()
-        pos = (event.x / w) * self.duration
-        pos = max(0, min(self.duration, pos))
+        pos = max(0, min(self.duration, (event.x / w) * self.duration))
 
         # Check if near in/out markers for drag
         def near(pt, tolerance=8):
@@ -866,8 +880,7 @@ class HighlightGrab(tk.Tk):
         elif near(self.out_point):
             self._drag_out = True
         else:
-            if self._player:
-                self._player.set_time(int(pos * 1000))
+            self._seek_to(pos)
 
     def _timeline_drag(self, event):
         if self.duration <= 0:
@@ -876,12 +889,12 @@ class HighlightGrab(tk.Tk):
         pos = max(0, min(self.duration, (event.x / w) * self.duration))
         if self._drag_in:
             self.in_point = pos
+            self._draw_timeline()
         elif self._drag_out:
             self.out_point = pos
+            self._draw_timeline()
         else:
-            if self._player:
-                self._player.set_time(int(pos * 1000))
-        self._draw_timeline()
+            self._seek_to(pos)
 
     def _timeline_release(self, event):
         self._drag_in = False
