@@ -186,13 +186,32 @@ class HighlightGrab(_BaseWindow):
     def _register_drop_targets(self):
         if not _DND_AVAILABLE:
             return
-        # Register each panel separately — do NOT register the root window (self)
-        # alongside children; that causes Win32 OLE conflicts that swallow clicks.
-        for widget in (self.video_frame, self.left, self.center, self.right):
-            widget.drop_target_register(DND_FILES)
-            widget.dnd_bind("<<Drop>>", self._on_drop)
+        # Only register the video frame — it is the largest neutral surface and
+        # has no interactive children that OLE could shadow. Panels with buttons
+        # (left, right) must NOT be registered or clicks stop working on Windows.
+        self.video_frame.drop_target_register(DND_FILES)
+        self.video_frame.dnd_bind("<<DropEnter>>", self._on_drop_enter)
+        self.video_frame.dnd_bind("<<DropLeave>>", self._on_drop_leave)
+        self.video_frame.dnd_bind("<<Drop>>", self._on_drop)
+
+    def _on_drop_enter(self, event):
+        self.video_frame.config(bg="#2a3a2a")
+        self._drop_hint = tk.Label(
+            self.video_frame, text="Släpp filer här",
+            font=("Segoe UI", 18, "bold"), fg=ACCENT, bg="#2a3a2a"
+        )
+        self._drop_hint.place(relx=0.5, rely=0.5, anchor="center")
+        return event.action
+
+    def _on_drop_leave(self, event):
+        self.video_frame.config(bg="black")
+        if hasattr(self, "_drop_hint"):
+            self._drop_hint.destroy()
 
     def _on_drop(self, event):
+        self.video_frame.config(bg="black")
+        if hasattr(self, "_drop_hint"):
+            self._drop_hint.destroy()
         paths = self._parse_drop_paths(event.data)
         added = 0
         for p in paths:
@@ -207,6 +226,8 @@ class HighlightGrab(_BaseWindow):
                 added += 1
         if added:
             self._show_toast(f"✓ {added} fil{'er' if added != 1 else ''} tillagd{'a' if added != 1 else ''}")
+        else:
+            self._show_toast("⚠ Inga videofiler hittades")
 
     @staticmethod
     def _parse_drop_paths(data: str) -> list[str]:
@@ -374,7 +395,7 @@ class HighlightGrab(_BaseWindow):
         self._highlight_speed_btn()
 
         # Status bar
-        dnd_hint = "" if _DND_AVAILABLE else "  |  pip install tkinterdnd2 för drag-och-släpp"
+        dnd_hint = "  |  Dra filer till videon" if _DND_AVAILABLE else "  |  pip install tkinterdnd2 för drag-och-släpp"
         self.status_bar = tk.Label(
             parent,
             text=f"Space=Play/Pause  I=In  O=Out  M/Enter=Spara  E=Exportera  ?=Hjälp{dnd_hint}",
