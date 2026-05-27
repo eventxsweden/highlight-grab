@@ -186,7 +186,9 @@ class HighlightGrab(_BaseWindow):
     def _register_drop_targets(self):
         if not _DND_AVAILABLE:
             return
-        for widget in (self, self.video_frame, self.left):
+        # Register each panel separately — do NOT register the root window (self)
+        # alongside children; that causes Win32 OLE conflicts that swallow clicks.
+        for widget in (self.video_frame, self.left, self.center, self.right):
             widget.drop_target_register(DND_FILES)
             widget.dnd_bind("<<Drop>>", self._on_drop)
 
@@ -703,13 +705,13 @@ class HighlightGrab(_BaseWindow):
             tk.Label(thumb_frame, text="⏳", fg=MUTED, bg="black",
                      font=("Segoe UI", 16)).pack(expand=True)
 
-        # Delete button – pack before info so side="right" gets space before expand=True
-        del_btn = tk.Button(card, text="✕", font=("Segoe UI", 9),
-                            bg="#2a2a2a", fg=MUTED, bd=0, relief="flat",
-                            cursor="hand2", activebackground="#2a2a2a",
-                            activeforeground=DANGER, padx=4,
+        # Delete button – packed before info so side="right" claims space first
+        del_btn = tk.Button(card, text="✕", font=("Segoe UI", 11, "bold"),
+                            bg="#2a2a2a", fg=DANGER, bd=0, relief="flat",
+                            cursor="hand2", activebackground=DANGER,
+                            activeforeground="white", padx=8, pady=6,
                             command=lambda sid=seg["id"]: self._remove_segment(sid))
-        del_btn.pack(side="right", anchor="n", padx=4, pady=4)
+        del_btn.pack(side="right", anchor="center", padx=6, pady=4)
 
         # Info
         info = tk.Frame(card, bg="#2a2a2a", padx=6)
