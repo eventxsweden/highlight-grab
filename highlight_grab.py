@@ -31,13 +31,8 @@ try:
 except ImportError:
     cv2 = None
 
-try:
-    from tkinterdnd2 import TkinterDnD, DND_FILES
-    _DND_AVAILABLE = True
-except ImportError:
-    TkinterDnD = None
-    DND_FILES = None
-    _DND_AVAILABLE = False
+import ctypes
+import ctypes.wintypes
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 APP_NAME = "Highlight Grab"
@@ -133,9 +128,7 @@ def extract_thumbnail(video_path, at_second):
 
 
 # ── Main Application ───────────────────────────────────────────────────────────
-_BaseWindow = TkinterDnD.Tk if _DND_AVAILABLE else tk.Tk
-
-class HighlightGrab(_BaseWindow):
+class HighlightGrab(tk.Tk):
     def __init__(self):
         super().__init__()
 
@@ -166,7 +159,7 @@ class HighlightGrab(_BaseWindow):
 
         self._build_ui()
         self._bind_keys()
-        self._register_drop_targets()
+        self.after(200, self._setup_drop_files)  # after mainloop starts
 
         self.after(100, self._tick)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -182,36 +175,61 @@ class HighlightGrab(_BaseWindow):
             self._player = None
             print(f"VLC init error: {e}")
 
-    # ── Drag-and-drop ────────────────────────────────────────────────────────
-    def _register_drop_targets(self):
-        if not _DND_AVAILABLE:
-            return
-        # Register ONLY the root window — never child widgets.
-        # VLC steals video_frame's HWND so tkinter stops receiving events there.
-        # The root HWND is always owned by tkinter and receives drops anywhere
-        # on the application window without interfering with child button clicks.
-        self.drop_target_register(DND_FILES)
-        self.dnd_bind("<<DropEnter>>", self._on_drop_enter)
-        self.dnd_bind("<<DropLeave>>", self._on_drop_leave)
-        self.dnd_bind("<<Drop>>", self._on_drop)
+    # ── Drag-and-drop (Windows DragAcceptFiles — ingen OLE/COM) ──────────────
+    def _setup_drop_files(self):
+        """Registrera Windows inbyggda fil-drop via DragAcceptFiles.
 
-    def _on_drop_enter(self, event):
-        self._drop_hint = tk.Label(
-            self.video_frame, text="⬇  Släpp videofiler här",
-            font=("Segoe UI", 20, "bold"), fg="black", bg=ACCENT,
-            padx=20, pady=10
-        )
-        self._drop_hint.place(relx=0.5, rely=0.5, anchor="center")
-        return event.action
+        Använder INTE tkinterdnd2/OLE — det modifierar fönstrets meddelandeloop
+        och blockerar musklick på child-widgets. DragAcceptFiles + WM_DROPFILES
+        är en enklare Win32-mekanism utan den konflikten.
+        """
+        try:
+            shell32 = ctypes.windll.shell32
+            user32  = ctypes.windll.user32
+            hwnd    = self.winfo_id()
 
-    def _on_drop_leave(self, event):
-        if hasattr(self, "_drop_hint"):
-            self._drop_hint.destroy()
+            # Tillåt WM_DROPFILES från icke-upphöjda processer (UAC-fix)
+            MSGFLT_ALLOW = 1
+            WM_DROPFILES      = 0x0233
+            WM_COPYGLOBALDATA = 0x0049
+            try:
+                user32.ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, MSGFLT_ALLOW, None)
+                user32.ChangeWindowMessageFilterEx(hwnd, WM_COPYGLOBALDATA, MSGFLT_ALLOW, None)
+            except Exception:
+                pass
 
-    def _on_drop(self, event):
-        if hasattr(self, "_drop_hint"):
-            self._drop_hint.destroy()
-        paths = self._parse_drop_paths(event.data)
+            shell32.DragAcceptFiles(hwnd, True)
+
+            # Subklassa fönstret för att ta emot WM_DROPFILES
+            WNDPROC = ctypes.WINFUNCTYPE(
+                ctypes.c_long,
+                ctypes.wintypes.HWND, ctypes.wintypes.UINT,
+                ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM,
+            )
+
+            def _proc(hwnd, msg, wparam, lparam):
+                if msg == WM_DROPFILES:
+                    hdrop = wparam
+                    count = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+                    paths = []
+                    for i in range(count):
+                        size = shell32.DragQueryFileW(hdrop, i, None, 0) + 1
+                        buf  = ctypes.create_unicode_buffer(size)
+                        shell32.DragQueryFileW(hdrop, i, buf, size)
+                        paths.append(buf.value)
+                    shell32.DragFinish(hdrop)
+                    self.after(0, lambda p=paths: self._handle_dropped_files(p))
+                    return 0
+                return user32.CallWindowProcW(
+                    self._old_wndproc, hwnd, msg, wparam, lparam
+                )
+
+            self._drop_wndproc = WNDPROC(_proc)   # måste hålla referens!
+            self._old_wndproc  = user32.SetWindowLongPtrW(hwnd, -4, self._drop_wndproc)
+        except Exception as e:
+            print(f"DnD setup failed: {e}")
+
+    def _handle_dropped_files(self, paths):
         added = 0
         for p in paths:
             path = Path(p)
@@ -227,32 +245,6 @@ class HighlightGrab(_BaseWindow):
             self._show_toast(f"✓ {added} fil{'er' if added != 1 else ''} tillagd{'a' if added != 1 else ''}")
         else:
             self._show_toast("⚠ Inga videofiler hittades")
-
-    @staticmethod
-    def _parse_drop_paths(data: str) -> list[str]:
-        """Parse the tkinterdnd2 drop string into a list of file paths.
-
-        Windows Explorer wraps paths that contain spaces in curly braces,
-        e.g.: {C:/My Videos/clip 1.mp4} C:/clean.mp4
-        """
-        paths = []
-        data = data.strip()
-        i = 0
-        while i < len(data):
-            if data[i] == "{":
-                end = data.index("}", i)
-                paths.append(data[i + 1:end])
-                i = end + 1
-            elif data[i] == " ":
-                i += 1
-            else:
-                end = data.find(" ", i)
-                if end == -1:
-                    paths.append(data[i:])
-                    break
-                paths.append(data[i:end])
-                i = end
-        return paths
 
     # ── UI Build ─────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -394,10 +386,9 @@ class HighlightGrab(_BaseWindow):
         self._highlight_speed_btn()
 
         # Status bar
-        dnd_hint = "  |  Dra filer till videon" if _DND_AVAILABLE else "  |  pip install tkinterdnd2 för drag-och-släpp"
         self.status_bar = tk.Label(
             parent,
-            text=f"Space=Play/Pause  I=In  O=Out  M/Enter=Spara  E=Exportera  ?=Hjälp{dnd_hint}",
+            text="Space=Play/Pause  I=In  O=Out  M/Enter=Spara  E=Exportera  ?=Hjälp  |  Dra filer till fönstret",
             font=("Consolas", 8), fg=MUTED, bg="#111", anchor="w", padx=8, pady=3
         )
         self.status_bar.pack(fill="x", side="bottom")
@@ -1069,6 +1060,14 @@ class HighlightGrab(_BaseWindow):
                   cursor="hand2", command=win.destroy).pack(pady=12)
 
     def _on_close(self):
+        # Återställ WndProc innan fönstret förstörs
+        if hasattr(self, "_old_wndproc") and self._old_wndproc:
+            try:
+                ctypes.windll.user32.SetWindowLongPtrW(
+                    self.winfo_id(), -4, self._old_wndproc
+                )
+            except Exception:
+                pass
         if self._player:
             self._player.stop()
         self.destroy()
