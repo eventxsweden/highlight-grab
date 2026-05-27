@@ -169,8 +169,19 @@ class HighlightGrab(tk.Tk):
         if vlc is None:
             return
         try:
-            self._vlc_instance = vlc.Instance("--no-video-title-show", "--quiet")
+            # --no-mouse-events och --no-keyboard-events hindrar VLC från att
+            # installera Win32-input-hooks som annars äter musklick i hela appen.
+            self._vlc_instance = vlc.Instance(
+                "--no-video-title-show", "--quiet",
+                "--no-mouse-events", "--no-keyboard-events",
+            )
             self._player = self._vlc_instance.media_player_new()
+            # Belt-and-suspenders: stäng av input även på player-nivå
+            try:
+                self._player.video_set_mouse_input(False)
+                self._player.video_set_key_input(False)
+            except Exception:
+                pass
         except Exception as e:
             self._player = None
             print(f"VLC init error: {e}")
